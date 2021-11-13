@@ -1,0 +1,264 @@
+---
+title: "Import the data"
+output: html_notebook
+---
+
+Import data from the original PLS files. See README in the `data` directory for
+the expected file layout.
+
+```{r}
+library(tidyverse)
+library(arrow)
+library(data.table)
+library(dtplyr)
+source("../lib/parsers.R")
+```
+```{r}
+panel_sched <- tribble(
+  ~year,~quarter,~visit,~panel,
+  1,"Q1","V1","P11",
+  1,"Q2","V2","P11",
+  1,"Q3","V3","P11",
+  1,"Q4","V4","P11",
+  
+  1,"Q2","V1","P12",
+  1,"Q3","V2","P12",
+  1,"Q4","V3","P12",
+  2,"Q5","V4","P12",
+  
+  1,"Q3","V1","P13",
+  1,"Q4","V2","P13",
+  2,"Q5","V3","P13",
+  2,"Q6","V4","P13",
+  
+  1,"Q4","V1","P14",
+  2,"Q5","V2","P14",
+  2,"Q6","V3","P14",
+  2,"Q7","V4","P14",
+  
+  2,"Q5","V1","P15",
+  2,"Q6","V2","P15",
+  2,"Q7","V3","P15",
+  2,"Q8","V4","P15",
+  
+  2,"Q6","V1","P16",
+  2,"Q7","V2","P16",
+  2,"Q8","V3","P16",
+  3,"Q1","V4","P16",
+  
+  2,"Q7","V1","P17",
+  2,"Q8","V2","P17",
+  3,"Q1","V3","P17",
+  3,"Q2","V4","P17",
+  
+  2,"Q8","V1","P18",
+  3,"Q1","V2","P18",
+  3,"Q2","V3","P18",
+  3,"Q3","V4","P18",
+  
+  3,"Q1","V1","P21",
+  3,"Q2","V2","P21",
+  3,"Q3","V3","P21",
+  3,"Q4","V4","P21",
+  
+  3,"Q2","V1","P22",
+  3,"Q3","V2","P22",
+  3,"Q4","V3","P22",
+  
+  3,"Q3","V1","P23",
+  3,"Q4","V2","P23",
+  
+  3,"Q4","V1","P24"
+)
+```
+
+Read in all the household-level files.
+
+```{r}
+hhfv17 <- parse_hh("../../data/2017-18/FHH_FV.TXT.xz",1) |> setDT()
+hhrv17 <- parse_hh("../../data/2017-18/FHH_RV.TXT.xz",1) |> setDT()
+```
+
+
+```{r}
+hhfv18 <- parse_hh("../../data/2018-19/hh104_fv_final.txt.xz",2) |> setDT()
+hhrv18 <- parse_hh("../../data/2018-19/hh104_rv_final.txt.xz",2) |> setDT()
+```
+
+
+```{r}
+hhfv19 <- parse_hh("../../data/2019-20/HHV1.TXT.xz",3) |> setDT()
+hhrv19 <- parse_hh("../../data/2019-20/HHRV.TXT.xz",3) |> setDT()
+```
+
+Combine them, select only the urban households, identify the panel
+using the panel schedule and create the unique household identifier.
+
+```{r}
+all_urban_hh <- rbind(hhfv17,hhrv17,hhfv18,hhrv18,hhfv19,hhrv19,fill=TRUE) |>
+  filter(sector==2) |>
+  left_join(panel_sched,
+            by=c("year","quarter","visit"))|>
+  mutate(uhid=paste(panel,uhid,sep="|")) |>
+  as.data.table() |>
+  setkey(uhid)
+rm(hhfv17,hhrv17,hhfv18,hhrv18,hhfv19,hhrv19)
+```
+
+Check if religion or social group changes.
+
+```{r}
+h.relg.grp.mismatch <-
+  all_urban_hh |>
+  group_by(uhid) |>
+  distinct(religion,social_group)|>
+  count() |>
+  filter(n>1) |>
+  ungroup() |>
+  select(uhid) |>
+  distinct() |>
+  as.data.table()
+```
+
+Check if household size has unusual changes
+
+```{r}
+h.size.mismatch <-
+  all_urban_hh |>
+  group_by(uhid) |>
+  summarize(m=min(hh_size),M=max(hh_size))|>
+  filter(M-m>3) |>
+  ungroup() |>
+  select(uhid) |>
+  distinct() |>
+  as.data.table()
+```
+
+Tabulate the number of households
+
+```{r}
+all_urban_hh |>
+  group_by(panel,year,quarter,visit) |>
+  summarize(n=n()) |>
+  as_tibble()
+```
+
+Read in all the person-level files.
+
+```{r}
+pfv17 <- parse_pfv("../../data/2017-18/FPER_FV.TXT.xz",1) |> setDT()
+```
+
+```{r}
+# Quarters seem to be miscoded in this file
+prv17 <- parse_prv("../../data/2017-18/FPER_RV.TXT.xz",1)|>
+  mutate(quarter=case_when(
+    quarter=="Q3"~"Q2",
+    quarter=="Q4"~"Q3",
+    quarter=="Q5"~"Q4"
+  )) |>
+  setDT()
+  
+```
+
+```{r}
+pfv18 <- parse_pfv("../../data/2018-19/per104_fv_final.txt.xz",2) |> setDT()
+```
+
+```{r}
+prv18 <- parse_prv("../../data/2018-19/per104_rv_final.txt.xz",2) |> setDT()
+```
+
+```{r}
+pfv19 <- parse_pfv("../../data/2019-20/PERV1.TXT.xz",3) |> setDT()
+```
+
+```{r}
+prv19 <- parse_prv("../../data/2019-20/PERRV.TXT.xz",3) |> setDT()
+```
+
+Combine them, identify the panels, assign unique id.
+
+```{r}
+all_urban_pers <- rbind(pfv17,prv17,pfv18,prv18,pfv19,prv19,fill=TRUE) |>
+  filter(sector==2) |>
+  left_join(panel_sched,
+            by=c("year","quarter","visit"))|>
+  mutate(uhid=paste(panel,uhid,sep="|"),
+         upid=paste(panel,upid,sep="|")) |>
+  as.data.table() |>
+  setkey(uhid,upid)
+rm(pfv17,prv17,pfv18,prv18,pfv19,prv19)
+```
+
+See if sex or relation to head of household changes.
+
+```{r}
+p.sex.rel.mismatch <- 
+  all_urban_pers |>
+  group_by(uhid,upid) |>
+  distinct(sex,rel_to_head) |>
+  count() |>
+  filter(n>1) |>
+  ungroup() |>
+  select(uhid) |>
+  distinct() |>
+  as.data.table()
+```
+See if there is an unusual change in age.
+
+```{r}
+p.age.mismatch <- 
+  all_urban_pers |>
+  group_by(uhid,upid) |>
+  summarize(m=min(age),M=max(age)) |>
+  filter(M-m>4)|>
+  ungroup() |>
+  select(uhid) |>
+  distinct() |>
+  as.data.table()
+```
+## Drop bad matches
+
+Combined list of all households that fail validation tests.
+
+```{r}
+bad_matches <- 
+  rbind(h.size.mismatch,h.relg.grp.mismatch,
+            p.age.mismatch,p.sex.rel.mismatch) |>
+  distinct() |>
+  as.data.table()
+```
+
+Drop households and all persons in them that fail tests.
+
+```{r}
+all_urban_pers <- anti_join(all_urban_pers,bad_matches,by="uhid") |>
+  as.data.table()
+all_urban_hh <- anti_join(all_urban_hh,bad_matches,by="uhid") |>
+  as.data.table()
+```
+
+Tabulate the number of persons remaining after validation.
+
+```{r}
+all_urban_pers |>
+  group_by(panel,year,quarter,visit)|>
+  summarize(n=n()) |>
+  arrange(panel,year,quarter,visit) |>
+  as_tibble()
+```
+
+Save.
+
+
+```{r}
+write_parquet(setDF(all_urban_hh),"../../artefacts/linked_hh.parquet",
+              version=2,compression="gzip")
+```
+
+```{r}
+write_parquet(setDF(all_urban_pers),"../../artefacts/linked_pers.parquet",
+              version=2,compression="gzip")
+```
+

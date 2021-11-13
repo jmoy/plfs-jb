@@ -1,0 +1,266 @@
+---
+title: "Initial descriptive statistics and transition matrix"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+```{r}
+library(tidyverse)
+theme_set(theme_bw())
+library(knitr)
+library(kableExtra)
+library(arrow)
+library(data.table)
+library(dtplyr)
+source("lib/code_values.R")
+source("lib/matching.R")
+source("lib/formatters.R")
+
+knitr::opts_chunk$set(echo=FALSE,
+                      message = FALSE,warnings=FALSE)
+options(knitr.kable.NA="")
+options(digits=2)
+```
+
+
+```{r}
+hh <- arrow::read_parquet("../artefacts/rewritten_hh.parquet",
+                          col_select = c("uhid","year","quarter",
+                                         "panel","visit")) |>
+  setDT() |>
+  setkey(uhid) |>
+  mutate(period=yq.to.t(year,quarter),
+         year_quarter=t.to.yq(period),
+         visit=as.numeric(str_sub(visit,2,2))) |>
+  filter(period<=10) |>
+  as.data.table()
+
+```
+
+
+```{r}
+pp <- open_dataset("../artefacts/rewritten_pp.parquet") |>
+  select(upid,uhid,fsu,
+                                       year,quarter,
+                                       starts_with("status"),
+                                       starts_with("wage"),
+                                       panel,
+                                       state_ut,
+                                       age,sex,
+                                       adj_multiplier,
+                                       status.cws,
+                                       year,quarter,
+                                       visit,
+                                       earnings_salaried,
+                                       earnings_self_emp) |>
+  filter(age>=15,age<=65)|>
+  collect() |>
+  setDT()|>
+  mutate(period=yq.to.t(year,quarter)) |>
+  filter(period<=10) |>
+  filter(sex!=3) |>
+  mutate(across(c(earnings_salaried,earnings_self_emp,
+                  starts_with("wage")),
+                ~replace_na(as.numeric(.),0)),
+         earnings_csl = (wage.a1.d1+wage.a1.d2+wage.a1.d3+wage.a1.d4+
+                        wage.a1.d5+wage.a1.d6+wage.a1.d7+
+                        wage.a2.d1+wage.a2.d2+wage.a2.d3+wage.a2.d4+
+                        wage.a2.d5+wage.a2.d6+wage.a2.d7)*4,
+         earnings_all = earnings_salaried+earnings_self_emp+earnings_csl,
+         sex = if_else(sex==1,"Male","Female"),
+         status.cws.brd=category.status.coarse(status.cws),
+         status.cws.nrw = category.status(status.cws),
+         visit=as.numeric(str_sub(visit,2,2))
+         ) |>
+  as.data.table() |>
+  setkey(upid)
+```
+
+
+```{r}
+options(digits=4)
+dat_npanels <- 
+  hh |>
+  distinct(panel) |>
+  count() |>
+  as_tibble() |>
+  pull()
+tab_panel_samp_size <- 
+  hh |>
+  group_by(panel,year_quarter) |>
+  summarize(n=n()*1e-3) |>
+  as_tibble() |>
+  rename(`Year-Quarter`=year_quarter)|>
+  pivot_wider(names_from=panel,values_from=n) 
+tab_panel_samp_size|>
+  kbl(booktabs=TRUE,linesep=c("","","","\\addlinespace"),
+      digits=1,
+      caption="Number of households visited in each panel in each quarter",
+      label="panel-samp-size")|>
+  add_header_above(c("","Panel identifier"=dat_npanels)) |>
+  add_header_above(c("No. of households visited (thousands)"=dat_npanels+1))|>
+  kable_styling(latex_options="scale_down",font_size=10)
+options(digits=2)
+```
+```{r}
+tab_attrt_by_panel <- local({
+  vcounts <- hh |>
+  group_by(panel,visit) |>
+  summarize(n=n()) |>
+  ungroup() |>
+  as_tibble()
+vcounts1 <- vcounts |>
+  filter(visit==1) |>
+  select(-visit)
+
+  inner_join(vcounts,vcounts1,by="panel") |>
+    mutate(attr_pct=(n.y-n.x)/n.y*100)|>
+    filter(visit!=1) |>
+    select(-n.x,-n.y)|>
+    rename(Visit=visit) |>
+    pivot_wider(names_from=panel,values_from=attr_pct)
+})
+```
+
+```{r}
+tab_attrt_by_panel |> 
+  kbl(booktabs=TRUE,digits=1,
+      linesep=c("","","","\\addlinespace"),
+      caption="Percentage of households attrited in each visit after first",
+      label="attr-by-panel")|>
+  add_header_above(c("","Panel"=9)) |>
+  add_header_above(c("","% of households attrited"=9)) |>
+  kable_styling(font_size=10)
+```
+```{r}
+pp_matched <- match.decorate(pp,upid,period)
+matched <- 
+  left_join(filter(pp_matched,match.side=="before",match.status=="matched"),
+            filter(pp_matched,match.side=="after",match.status=="matched"),
+            by="match.id") |>
+  as.data.table()
+
+```
+
+```{r}
+attrited <- 
+  pp_matched |>
+  filter(match.status=="no.next",visit!=4,period!=max(period)) |>
+  select(period.x=period,sex.x=sex,
+         status.cws.nrw.x=status.cws.nrw,
+         adj_multiplier.x=adj_multiplier) |>
+   mutate(status.cws.nrw.y="attrit") |>
+  as.data.table()
+```
+
+```{r}
+counts <- 
+  rbind(matched,attrited,fill=TRUE) |>
+  group_by(period.x,sex.x,status.cws.nrw.x,status.cws.nrw.y) |>
+  summarize(wts = sum(adj_multiplier.x,na.rm=TRUE)) |>
+  ungroup() |>
+  as_tibble() |>
+  complete(period.x,sex.x,status.cws.nrw.x,status.cws.nrw.y,fill=list(wts=0))
+```
+
+```{r}
+tab_transmat <- local({
+  outs <- 
+    counts |>
+    group_by(sex.x,period.x) |>
+    mutate(wts=(wts*100)/sum(wts)) |>
+    ungroup()
+  
+  xtots <- 
+    outs |>
+    group_by(sex.x,period.x,status.cws.nrw.x) |>
+    summarize(wts=sum(wts),.groups="drop") |>
+    mutate(status.cws.nrw.y="ALL")
+  ytots <- 
+    outs |>
+    group_by(sex.x,period.x,status.cws.nrw.y) |>
+    summarize(wts=sum(wts),.groups="drop") |>
+    mutate(status.cws.nrw.x="ALL")
+  all <- 
+    outs|>
+    group_by(sex.x,period.x) |> 
+    summarize(wts=sum(wts),.groups="drop") |>
+    mutate(status.cws.nrw.x="ALL",status.cws.nrw.y="ALL")
+
+  bind_rows(outs,xtots,ytots,all) |>
+    group_by(sex.x,status.cws.nrw.x,status.cws.nrw.y)|>
+    summarize(wts=mean(wts),.groups="drop") |>
+    mutate(across(c(status.cws.nrw.x,status.cws.nrw.y),
+                  ~factor(.,levels=c(coarse.category.lvls,"attrit","ALL")))) |>
+    arrange(sex.x,status.cws.nrw.x,status.cws.nrw.y) 
+  })
+
+```
+
+
+```{r}
+options(digits=2)
+tab_transmat |>
+  filter(sex.x=="Female")|>
+  format_transmat("Occupancy of and gross flow between employment rates (Female)","transmat-f",TRUE)
+
+```
+
+```{r}
+tab_transmat |>
+  filter(sex.x=="Male")|>
+  format_transmat("Occupancy of and gross flow between employment rates (Male)","transmat-m",TRUE)
+```
+
+```{r}
+dat_change_pct <- 
+  matched |>
+  group_by(period.x,sex.x) |>
+  summarize(changed = sum((status.cws.nrw.x!=status.cws.nrw.y)*adj_multiplier.x,na.rm=TRUE)/
+                      sum(adj_multiplier.x,na.rm=TRUE)*100,.groups="drop") |>
+  as_tibble() |>
+  pivot_wider(names_from=sex.x,values_from=changed) |>
+  filter(period.x<=8) |>
+  summarize(across(c(Female,Male),mean))
+```
+
+```{r}
+gr_break <- function(wrk_typ){
+  data <- 
+    matched |>
+    filter(status.cws.nrw.x==wrk_typ,status.cws.nrw.y=="nwrk") |>
+    mutate(rel.wage = earnings_all.y/earnings_all.x) |>
+    arrange(rel.wage) |>
+    mutate(cumdens = cumsum(adj_multiplier.x)/sum(adj_multiplier.x)) |>
+    filter(rel.wage<2) |>
+    as_tibble()
+
+  data |>
+    ggplot()+
+    geom_line(aes(rel.wage,cumdens),color="darkred")+
+    xlab("Earnings[nwrk] / Earnings[work]")+
+    ylab("Cumulative frequency")+
+    ggtitle(wrk_typ)
+}
+```
+
+```{r}
+(fig_earn_break <- 
+cowplot::plot_grid(gr_break("sal-emp"),
+                   gr_break("slf-emp"),
+                   labels="auto",label_fontface="plain",nrow=1
+                   ))
+```
+
+```{r}
+to_save <-  
+  do.call(c,lapply(
+      c("tab_*","dat_*","fig_*"),
+      function(x) ls(.GlobalEnv,pattern=glob2rx(x))))
+save(list=to_save,
+     file="../artefacts/res_transitions.rds")
+```
+
+
+

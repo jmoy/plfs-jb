@@ -1,0 +1,274 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+(c) Jyotirmoy Bhattacharya, 2021
+
+Rerun rewrite but this time on 2018-19 and 2019-20 as a validation check. If all
+goes well the discovered FSU mapping will be the identity and there will be no
+validation errors. 
+
+See the comments in `rewrite.Rmd` for the matching process.
+
+```{r}
+library(tidyverse)
+library(stringr)
+library(arrow)
+library(data.table)
+library(dtplyr)
+source("../lib/parsers.R")
+```
+
+
+```{r}
+pp <- read_parquet("../../artefacts/linked_pers.parquet") |> 
+  setDT() |>
+  setkey(uhid,upid)
+pp2 <- 
+  pp |>
+  select(year,uhid,upid,
+                                    visit,person_no,
+                                    rel_to_head,sex,
+                                    age,gen_edu_level) |>
+  as.data.table()
+```
+
+```{r}
+hh <- read_parquet("../../artefacts/linked_hh.parquet") |> 
+  setDT() |>
+  setkey(uhid)
+hh2 <- 
+  hh |>
+  select(year,uhid,visit,sector,
+                                  panel,fsu,
+                                  state_ut,district,fsu,
+                                  sg_sb_no,stage2_stratum_no,hh_no,
+                                  hh_size,religion,social_group)|>
+  mutate(uhid_trunc = paste(panel,sg_sb_no,stage2_stratum_no,hh_no,sep="|")) |>
+  as.data.table()
+         
+```
+
+
+
+```{r}
+tpp17 <- 
+  pp2 |>
+  filter(year==2) |>
+  group_by(uhid) |>
+  filter(visit==max(visit)) |>
+  ungroup() |>
+  as.data.table()
+thh17 <- 
+  hh2 |>
+  filter(year==2) |>
+  group_by(uhid) |>
+  filter(panel!="P15",visit==max(visit)) |>
+  ungroup() |>
+  as.data.table()
+tpp18 <- 
+  pp2 |>
+  filter(year==3) |>
+  group_by(uhid) |>
+  filter(visit==min(visit)) |>
+  ungroup() |>
+  as.data.table()
+thh18 <- 
+  hh2 |>
+  filter(year==3) |>
+  group_by(uhid) |>
+  filter(panel %in% c("P16","P17","P18"),visit==min(visit)) |>
+  ungroup() |>
+  as.data.table()
+fsu17 <- 
+  thh17 |>
+  distinct(fsu,state_ut,district) |>
+  as.data.table()
+fsu18 <- 
+  thh18 |>
+  distinct(fsu,state_ut,district) |>
+  as.data.table()
+```
+
+```{r}
+thh17 |>
+  distinct(uhid) |>
+  count()
+```
+
+```{r}
+fsu.candidates <- 
+  inner_join(fsu17,fsu18,
+             by=c("state_ut","district")) |>
+  as.data.table()
+```
+
+```{r}
+hhmatches <- 
+  inner_join(fsu.candidates,thh17,
+             by=c("fsu.x"="fsu")) |>
+  inner_join(thh18,
+             by=c("fsu.y"="fsu","uhid_trunc")) |>
+  filter(hh_size.x>2,hh_size.y>2,
+         panel.x==panel.y, religion.x == religion.y,
+         social_group.x==social_group.y) |>
+  select(fsu.x,fsu.y,uhid.x,uhid.y,hh_size.x) |>
+  as.data.table()
+               
+```
+
+```{r}
+ppmatches <- 
+  inner_join(inner_join(hhmatches,tpp17,by=c("uhid.x"="uhid")),
+             tpp18,
+             by=c("uhid.y"="uhid","person_no",
+                  "rel_to_head","sex","gen_edu_level")) |>
+  as.data.table()
+```
+
+```{r}
+ppcounts <- 
+  ppmatches |>
+  group_by(uhid.x,fsu.x,uhid.y,fsu.y,hh_size.x) |>
+  summarize(n=n()) |>
+  filter(n==hh_size.x) |>
+  as.data.table()
+```
+
+```{r}
+fsu.concord <- 
+  ppcounts |>
+  group_by(fsu.x,fsu.y) |>
+  summarize(n=n()) |>
+  group_by(fsu.x) |>
+  filter(n==max(n)) |>
+  ungroup() |>
+  group_by(fsu.y) |>
+  filter(n()==1) |>
+  ungroup() |>
+  transmute(fsu.old=fsu.x,fsu.new=fsu.y) |>
+  as.data.table()
+```
+
+```{r}
+fsu.concord |>
+  arrange(fsu.old) |>
+  as_tibble() |>
+  write_csv("../../artefacts/fsu_concordance.csv")
+```
+
+```{r}
+thh17 |>
+  filter(panel!="P11") |>
+  distinct(fsu) |>
+  count()
+```
+
+
+
+```{r}
+pp.rw <- 
+  left_join(pp,fsu.concord,by=c("fsu"="fsu.old")) |>
+  mutate(
+    fsu = case_when(
+      !is.na(fsu.new) ~ fsu.new,
+      TRUE ~ fsu),
+    rewritten = case_when(
+      !is.na(fsu.new) ~ TRUE,
+      TRUE ~ FALSE),
+    uhid=paste(panel,fsu,sg_sb_no,stage2_stratum_no,hh_no,sep="|"),
+    upid=paste(panel,fsu,sg_sb_no,stage2_stratum_no,hh_no,person_no,sep="|")) |>
+  select(-fsu.new) |>
+  as.data.table()
+```
+
+```{r}
+mean(pp.rw$rewritten)
+```
+
+```{r}
+hh.rw <- 
+  left_join(hh,fsu.concord,by=c("fsu"="fsu.old")) |>
+  mutate(
+    fsu = case_when(
+      !is.na(fsu.new) ~ fsu.new,
+      TRUE ~ fsu),
+    rewritten = case_when(
+      !is.na(fsu.new) ~ TRUE,
+      TRUE ~ FALSE),
+    uhid=paste(panel,fsu,sg_sb_no,stage2_stratum_no,hh_no,sep="|"))|>
+  select(-fsu.new) |>
+  as.data.table()
+```
+
+```{r}
+mean(hh.rw$rewritten)
+```
+
+```{r}
+h.relg.grp.mismatch <-
+  hh.rw |>
+  group_by(uhid) |>
+  distinct(religion,social_group)|>
+  count() |>
+  filter(n>1) |>
+  ungroup() |>
+  select(uhid) |>
+  distinct() |>
+  as.data.table()
+```
+
+```{r}
+h.size.mismatch <-
+  hh.rw |>
+  group_by(uhid) |>
+  summarize(m=min(hh_size),M=max(hh_size))|>
+  filter(M-m>3) |>
+  ungroup() |>
+  select(uhid) |>
+  distinct() |>
+  as.data.table()
+```
+
+```{r}
+p.sex.rel.mismatch <- 
+  pp.rw |>
+  group_by(uhid,upid) |>
+  distinct(sex,rel_to_head) |>
+  count() |>
+  filter(n>1) |>
+  ungroup() |>
+  select(uhid) |>
+  distinct() |>
+  as.data.table()
+```
+
+```{r}
+p.age.mismatch <- 
+  pp.rw |>
+  group_by(uhid,upid) |>
+  summarize(m=min(age),M=max(age)) |>
+  filter(M-m>4)|>
+  ungroup() |>
+  select(uhid) |>
+  distinct() |>
+  as.data.table()
+```
+
+```{r}
+bad_hh <- 
+  bind_rows(h.relg.grp.mismatch,
+            h.size.mismatch,
+            p.age.mismatch,
+            p.sex.rel.mismatch) |>
+  distinct() |>
+  as.data.table() |>
+  setkey(uhid)
+```
+
+Did we succeed?
+
+```{r}
+table(fsu.concord$fsu.old==fsu.concord$fsu.new)
+```
+

@@ -1,0 +1,37 @@
+state_ut,state_name,state_include
+01,Jammu & Kashmir,1
+02,Himachal Pradesh,1
+03,Punjab,1
+04,Chandigarh,0
+05,Uttrakhand,1
+06,Haryana,1
+07,Delhi,1
+08,Rajasthan,1
+09,Uttar Pradesh,1
+10,Bihar,1
+11,Sikkim,0
+12,Arunachal Pradesh,0
+13,Nagaland,0
+14,Manipur,0
+15,Mizoram,0
+16,Tripura,0
+17,Meghalaya,0
+18,Assam,1
+19,West Bengal,1
+20,Jharkhand,1
+21,Odisha,1
+22,Chhattisgarh,1
+23,Madhya Pradesh,1
+24,Gujarat,1
+25,Daman & Diu,0
+26,D & N Haveli,0
+27,Maharashtra,1
+28,Andhra Pradesh,1
+29,Karnataka,1
+30,Goa,0
+31,Lakshadweep,0
+32,Kerala,1
+33,Tamil Nadu,1
+34,Puducherry,0
+35,A & N Island,0
+36,Telangana,1

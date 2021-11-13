@@ -1,0 +1,317 @@
+---
+title: "Gross flows"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+(c) Jyotirmoy Bhattacharya, 2021
+
+Gross flows by industry and state.
+
+```{r}
+library(tidyverse)
+theme_set(theme_bw())
+library(knitr)
+library(kableExtra)
+library(arrow)
+library(rlang)
+library(data.table)
+library(dtplyr)
+source("lib/code_values.R")
+source("lib/matching.R")
+source("lib/formatters.R")
+
+knitr::opts_chunk$set(echo=FALSE,
+                      message = FALSE,warnings=FALSE)
+options(knitr.kable.NA="")
+options(digits=2)
+```
+
+
+```{r}
+state_codes <- read_csv("../data/state_codes.csv",
+                        col_types="ccl")
+```
+
+```{r}
+nic_codes <- read_csv("../data/nic-2008.csv",
+                      col_types="ccccc")
+```
+
+```{r}
+pp <- open_dataset("../artefacts/rewritten_pp.parquet") |>
+  select(upid,uhid,fsu,
+                                       year,quarter,
+                                       panel,
+                                       state_ut,
+                                       age,sex,
+                                       adj_multiplier,
+                                       status.cws,
+                                       ind_code.cws,
+                                       year,quarter,
+                                       visit,
+                                       earnings_salaried,
+                                       earnings_self_emp) |>
+  filter(age>=15,age<=65)|>
+  collect() |>
+  setDT()|>
+  mutate(period=yq.to.t(year,quarter)) |>
+  filter(period<=10) |>
+  left_join(state_codes,by=c("state_ut")) |>
+  filter(sex!=3) |>
+  mutate(sex = if_else(sex==1,"Male","Female"),
+         status.cws.brd=category.status.coarse(status.cws),
+         status.cws.nrw = category.status(status.cws),
+         visit=as.numeric(str_sub(visit,2,2))
+         ) |>
+  select(-state_include) |>
+  filter(!(status.cws.brd=="work" & ind_code.cws=="")) |>
+  as.data.table() |>
+  setkey(upid)
+```
+
+
+```{r}
+pp.m <- match.decorate(pp,upid,period) |>
+  filter(match.status=="matched") |>
+  as.data.table()
+```
+
+```{r}
+
+sum.wts <- function(df,wtvar,...){
+  wtvar <- ensym(wtvar)
+  df %>%
+    group_by(...) %>%
+    summarize(wts=sum(!!wtvar,na.rm=TRUE),.groups="drop") %>%
+    as.data.table()
+}
+
+flow_computer <- function(people,timevar,wtvar,statefn,...) {
+  timevar <- ensym(timevar)
+  wtvar <- ensym(wtvar)
+  joinspec <- c("state",rlang::as_string(timevar),
+                purrr::map_chr(ensyms(...),rlang::as_string))
+
+  people$state <- statefn(people)
+  
+  occupancy.t <- people %>%
+    filter(match.side=="before") %>%
+    sum.wts(!!wtvar,!!timevar,state,...) %>%
+    as.data.table()
+  occupancy.tp1 <- people %>%
+    filter(match.side=="after") %>%
+    sum.wts(!!wtvar,!!timevar,state,...) %>%
+    mutate(!!timevar := !!timevar-1) %>%
+    as.data.table()
+  occupancy.avg <- 
+    full_join(occupancy.t,occupancy.tp1,
+              by=joinspec) %>%
+    mutate(wts.x = if_else(is.na(wts.x),0,wts.x),
+           wts.y = if_else(is.na(wts.y),0,wts.y),
+           wts.avg = (wts.x+wts.y)/2) %>%
+    as.data.table()
+  rm(occupancy.t,occupancy.tp1)
+  
+  people <- 
+    inner_join(filter(people,match.side=="before"),
+               filter(people,match.side=="after"),
+               by="match.id") %>%
+    filter(state.x!=state.y) %>%
+    select("match.id") %>%
+    left_join(people,by="match.id") %>%
+    as.data.table()
+  
+  exits.t <- people %>%
+    filter(match.side=="before") %>%
+    sum.wts(!!wtvar,!!timevar,state,...) %>%
+    rename(wts.exit = wts) %>%
+    as.data.table()
+  
+  entries.tp1 <- people %>%
+    filter(match.side=="after") %>%
+    sum.wts(!!wtvar,!!timevar,state,...) %>%
+    mutate(!!timevar := !!timevar-1) %>%
+    rename(wts.entry= wts) %>%
+    as.data.table()
+  
+  full_join(exits.t,entries.tp1,by=joinspec) %>%
+    left_join(occupancy.avg,by=joinspec)%>%
+    mutate(wts.entry=if_else(is.na(wts.entry),0,wts.entry),
+           wts.exit=if_else(is.na(wts.exit),0,wts.exit),
+           exit.rate = wts.exit/wts.avg,
+           entry.rate = wts.entry/wts.avg,
+           gross.rate = entry.rate+exit.rate,
+           net.rate = entry.rate-exit.rate,
+           churn.rate = gross.rate-abs(net.rate)) %>%
+    rename(avg.wts=wts.avg) %>%
+    select(-starts_with("wts"))%>%
+    rename(wts.avg=avg.wts) %>%
+    as.data.table()
+}
+```
+
+```{r}
+gross_flows.byind <- flow_computer(pp.m,period,adj_multiplier,
+                             function(df) {
+                               paste(df$status.cws.brd,
+                                     df$status.cws.nrw,
+                                     df$ind_code.cws,sep="#")},
+                             sex) |>
+  separate(state,into=c("status.brd","status.nrw","ind_code"),sep="#") |>
+  filter(status.brd=="work") |>
+  as.data.table()
+```
+
+```{r}
+gross_flows2 <- 
+gross_flows.byind |>
+  group_by(ind_code,sex,status.nrw) |>
+  summarize(across(ends_with(".rate"),~sum(.x*wts.avg)/sum(wts.avg)),
+            wts.avg = mean(wts.avg),
+            .groups="drop") |>
+  as_tibble() |>
+  filter(!(status.nrw%in%c("sck-emp","nwrk")),
+         (sex=="Female" & wts.avg>1.25e7)|(sex=="Male" & wts.avg>5e7)) 
+```
+
+```{r}
+(fig_by_ind <- 
+gross_flows2  |>
+ggplot(aes(entry.rate,exit.rate))+
+  geom_abline(slope=1,intercept=0,color="salmon",linetype="dotted")+
+  geom_point(aes(size=wts.avg),color="black",alpha=0.4)+
+  geom_text(aes(label=ind_code),color="royalblue",hjust="inward",vjust="inward",size=2.5)+
+  facet_wrap(~sex+status.nrw,scales="free") +
+  theme(legend.position="none")+
+  xlab("Entry rates")+
+  ylab("Exit rates")
+)
+```
+
+```{r}
+gross_flows.bystate <- flow_computer(pp.m,period,adj_multiplier,
+                             function(df) {paste(df$status.cws.brd,df$status.cws.nrw,sep="#")},
+                             state_ut,sex) |>
+  separate(state,into=c("status.brd","status.nrw"),sep = "#") |>
+  filter(status.brd=="work") |>
+  as_tibble() |>
+  pivot_longer(c(wts.avg,ends_with(".rate")),values_to = "val",names_to = "var") |>
+  group_by(state_ut,sex,status.nrw,var) |>
+  summarize(val=median(val),.groups="drop") |>
+  pivot_wider(names_from="var",values_from="val")
+  
+```
+
+```{r}
+(fig_by_state <- 
+gross_flows.bystate |>
+  left_join(state_codes,by="state_ut") |>
+  filter(!(status.nrw %in% c("sck-emp","nwrk")),wts.avg>0.5e7) |>
+ggplot(aes(entry.rate,exit.rate))+
+  geom_abline(slope=1,intercept=0,color="salmon",linetype="dotted")+
+  geom_point(aes(size=wts.avg),color="black",alpha=0.4)+
+  geom_text(aes(label=state_name),color="royalblue",hjust="inward",vjust="inward",size=2)+
+  facet_wrap(~sex+status.nrw,scales="free") +
+  theme(legend.position = "none") +
+  xlab("Entry rates")+
+  ylab("Exit rates")
+)
+```
+```{r}
+gross_flows.stateind <- flow_computer(pp.m,period,adj_multiplier,
+                             function(df) {
+                               paste(df$status.cws.brd,
+                                     df$status.cws.nrw,
+                                     df$ind_code.cws,sep="#")},
+                             state_ut,sex) |>
+  separate(state,into=c("status.brd","status.nrw","ind_code"),sep="#") |>
+  filter(status.brd=="work") |>
+  left_join(state_codes,by="state_ut") |>
+  filter(state_include) |>
+  select(period,state_name,sex,ind_code,status.nrw,gross.rate,wts.avg) |>
+  left_join(gross_flows.byind |>
+              select(period,ind_code,sex,gross.rate,status.nrw),
+            by=c("period","sex","ind_code","status.nrw")) |>
+  mutate(resid=(gross.rate.x-gross.rate.y)/gross.rate.x) |>
+  as.data.table()
+```
+
+```{r}
+data.regmod <- 
+  gross_flows.stateind |>
+  filter((sex=="Female" & wts.avg>2.5e7)|(sex=="Male" & wts.avg>5e7)) |>
+  mutate(locus = paste(sex,status.nrw,ind_code,sep="#"),
+         state_sex=fct_relevel(paste(sex,state_name,sep="#"),
+                               "Male#Maharashtra")) |>
+  as.data.table()
+regmod <- 
+   lm(gross.rate.x ~ -1+locus+state_sex+as.factor(period),
+     weights=data.regmod$wts.avg,data=data.regmod)
+regcoeffs <- broom::tidy(regmod) 
+(dat_rsq_state_ind <- summary(regmod)$r.squared)
+```
+
+```{r}
+tab_coeff_ind <- 
+ regcoeffs |>
+  filter(str_starts(term,"locus"),p.value<0.05) |>
+  separate(term,into=c("Sex","Emp.\\ Status","ind_code"),sep="#") |>
+  filter(`Emp.\\ Status` %in% c("csl-emp","slf-emp","sal-emp")) |>
+  mutate(Sex=str_sub(Sex,6)) |>
+  left_join(select(nic_codes,ind_code,ind_name),by="ind_code")  |>
+  select(Industry=ind_name,`NIC Code`=ind_code,`Emp.\\ Status`,Sex,estimate) |>
+  pivot_wider(names_from=Sex,values_from=estimate) |>
+  arrange(case_when(
+    is.na(Female) ~ Male,
+    is.na(Male) ~ Female,
+    TRUE ~ (Male+Female)/2))
+tab_coeff_ind |>
+  kbl(booktabs=TRUE,digits=2,centering=TRUE,
+      label="coeff-ind",
+      caption="Regression coefficients, industry and employment type, $\\beta_{ijk}$ (only coefficients significant at 5\\% level of significance, baseline 0, equation estimated without intercept)",
+      escape=FALSE) |>
+  add_header_above(list("","","","Coefficient"=2)) |>
+  column_spec(1,width="20em") |>
+  kable_styling(latex_options="scale_down",font_size=9)
+```
+```{r}
+tab_coeff_state <- 
+  regcoeffs |>
+  filter(str_starts(term,"state_sex"),p.value<0.05)|>
+  separate(term,into=c("Sex","State"),sep="#") |>
+  mutate(Sex=str_sub(Sex,10)) |>
+  arrange(estimate) |>
+  select(State,
+         Sex,
+         `Estimate`=estimate)|>
+  pivot_wider(values_from=Estimate,names_from=Sex)
+tab_coeff_state |>
+  kbl(booktabs=TRUE,digits=2,centering=TRUE,
+      linesep = "",
+      caption="Regression coefficients, state $\\gamma_{lk}$ (only coefficients significant at 5\\% level of significance, baseline Maharashtra-Male)",
+      label="coeff-state") |>
+  kable_styling(font_size=10)
+```
+```{r}
+regmod_only_ind <- 
+   lm(gross.rate.x ~ -1+locus+as.factor(period),
+     weights=data.regmod$wts.avg,data=data.regmod)
+
+(dat_rsq_only_ind <- summary(regmod_only_ind)$r.squared)
+```
+
+
+
+```{r}
+to_save <-  
+  do.call(c,lapply(
+      c("tab_*","dat_*","fig_*"),
+      function(x) ls(.GlobalEnv,pattern=glob2rx(x))))
+save(list=to_save,
+     file="../artefacts/res_gross_flows.rds")
+```
+
+
+

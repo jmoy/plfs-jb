@@ -1,0 +1,89 @@
+ind_code,ind_name,ind_section,ind_sect_name,ind_sector
+01,Crop and animal production,A,"Agriculture, forestry and fishing",Primary
+02,Forestry and logging,A,"Agriculture, forestry and fishing",Primary
+03,Fishing and aquaculture,A,"Agriculture, forestry and fishing",Primary
+05,Mining of coal and lignite,B,Mining and quarrying,Secondary
+06,Extraction of crude petroleum and natural gas,B,Mining and quarrying,Secondary
+07,Mining of metal ores,B,Mining and quarrying,Secondary
+08,Other mining and quarrying,B,Mining and quarrying,Secondary
+09,Mining support service activities,B,Mining and quarrying,Secondary
+10,Manufacture of food products,C,Manufacturing,Secondary
+11,Manufacture of beverages,C,Manufacturing,Secondary
+12,Manufacture of tobacco products,C,Manufacturing,Secondary
+13,Manufacture of textiles,C,Manufacturing,Secondary
+14,Manufacture of wearing apparel,C,Manufacturing,Secondary
+15,Manufacture of leather and related products,C,Manufacturing,Secondary
+16,Manufacture of wood etc,C,Manufacturing,Secondary
+17,Manufacture of paper and paper products,C,Manufacturing,Secondary
+18,Printing and reproduction of recorded media,C,Manufacturing,Secondary
+19,Manufacture of coke and refined petroleum products,C,Manufacturing,Secondary
+20,Manufacture of chemical and chemical products,C,Manufacturing,Secondary
+21,Manufacture of pharmaceuticals etc,C,Manufacturing,Secondary
+22,Manufacture of rubber and plastic products,C,Manufacturing,Secondary
+23,Manufacture of other non-metallic mineral products,C,Manufacturing,Secondary
+24,Manufacture of basic metals,C,Manufacturing,Secondary
+25,Manufacture of fabricated metal products,C,Manufacturing,Secondary
+26,"Manufacture of computer, electronic and optical products",C,Manufacturing,Secondary
+27,Manufacture of electrical equipment,C,Manufacturing,Secondary
+28,Manufacture of machinery and equipment n.e.c.,C,Manufacturing,Secondary
+29,"Manufacture of motor vehicles, trailers and semi-trailers",C,Manufacturing,Secondary
+30,Manufacture of other transport equipment,C,Manufacturing,Secondary
+31,Manufacture of furniture,C,Manufacturing,Secondary
+32,Other manufacturing,C,Manufacturing,Secondary
+33,Repair and installation of machinery and equipment,C,Manufacturing,Secondary
+35,"Electricit, gas, steam and air conditioning supply",D,"Electricity, gas, steam and air conditioning supply",Secondary
+36,"Water collection, treatment and supply",E,Waste management,Secondary
+37,Sewerate,E,Waste management,Secondary
+38,"Waste collection, treatment and disposal activities",E,Waste management,Secondary
+39,Remediation activities and other waste management,E,Waste management,Secondary
+41,Construction of buildings,F,Construction,Secondary
+42,Civil engineering,F,Construction,Secondary
+43,Specialized construction activities,F,Construction,Secondary
+45,Wholesale and retail trade and repair of motor vehicles,G,Wholesale and retail trade,Tertiary
+46,"Wholesale trade, except of motor vehicles",G,Wholesale and retail trade,Tertiary
+47,"Retail trade, except of motor vehicles",G,Wholesale and retail trade,Tertiary
+49,Land transport and transport via pipelines,H,Transportation and storage,Tertiary
+50,Water transport,H,Transportation and storage,Tertiary
+51,Air transport,H,Transportation and storage,Tertiary
+52,Warehousing and support activities for transportation,H,Transportation and storage,Tertiary
+53,Postal and courier activities,H,Transportation and storage,Tertiary
+55,Accommodation,I,Accomodation and food service,Tertiary
+56,Food and beverage service activities,I,Accomodation and food service,Tertiary
+58,Publishing activities,J,Information and communication,Tertiary
+59,Motion picture etc,J,Information and communication,Tertiary
+60,Broadcasting and programming,J,Information and communication,Tertiary
+61,Telecommunications,J,Information and communication,Tertiary
+62,Computer programming etc,J,Information and communication,Tertiary
+63,Information service activities,J,Information and communication,Tertiary
+64,"Financial services, except insurance and pension",K,Financial and insurance activities,Tertiary
+65,"Insurance, reinsurance and pension",K,Financial and insurance activities,Tertiary
+66,Other financial activities,K,Financial and insurance activities,Tertiary
+68,Real estate activities,L,Real estate activities,Tertiary
+69,Legal and accounting activities,M,"Professional, scientific and technical activities",Tertiary
+70,Activities of head offices,M,"Professional, scientific and technical activities",Tertiary
+71,Architecture and engineering,M,"Professional, scientific and technical activities",Tertiary
+72,Scientific research and development,M,"Professional, scientific and technical activities",Tertiary
+73,Advertising and market research,M,"Professional, scientific and technical activities",Tertiary
+74,"Other professional, scientific and techincal activities",M,"Professional, scientific and technical activities",Tertiary
+75,Veterinary activities,M,"Professional, scientific and technical activities",Tertiary
+77,Rental and leasing activities,N,Administrative and support service,Tertiary
+78,Employment activities,N,Administrative and support service,Tertiary
+79,Travel agency etc,N,Administrative and support service,Tertiary
+80,Security and investigation agencies,N,Administrative and support service,Tertiary
+81,Services to buildings and landscape activities,N,Administrative and support service,Tertiary
+82,Office administration etc.,N,Administrative and support service,Tertiary
+84,Public administration and defence,O,Public administration and defence,Tertiary
+85,Education,P,Education,Tertiary
+86,Human health activities,Q,Human health and social work,Tertiary
+87,Residential care activities,Q,Human health and social work,Tertiary
+88,Social work activities without accommodation,Q,Human health and social work,Tertiary
+90,"Creative, arts and entertainment activities",R,"Arts, entertainment and recreation",Tertiary
+91,Libraries etc,R,"Arts, entertainment and recreation",Tertiary
+92,Gambling and betting activities,R,"Arts, entertainment and recreation",Tertiary
+93,"Sports, amusement and recreation",R,"Arts, entertainment and recreation",Tertiary
+94,Actitivities of membership organizations,S,Other services,Tertiary
+95,Repair of computers and personal and household goods,S,Other services,Tertiary
+96,Other personal service activities,S,Other services,Tertiary
+97,Activities of households as employers of domestic personnel,T,Activities of households as employers etc,Tertiary
+98,Undifferentiated production of households,T,Activities of households as employers etc,Tertiary
+99,Activities of extraterritorial organizations and bodies,U,Activities of extraterritorial organizations and bodies,Tertiary

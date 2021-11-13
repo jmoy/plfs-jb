@@ -1,0 +1,275 @@
+---
+title: "Individual level determinants of job gains and losses"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+```{r}
+library(tidyverse)
+library(survey)
+library(margins)
+library(arrow)
+library(rlang)
+library(data.table)
+library(dtplyr)
+library(texreg)
+source("lib/code_values.R")
+source("lib/matching.R")
+```
+
+
+```{r}
+pp <- open_dataset("../artefacts/rewritten_pp.parquet") |>
+  select(upid,uhid,fsu,
+                                       year,quarter,
+                                       starts_with("status"),
+                                       starts_with("wage"),
+                                       panel,
+                                       state_ut,
+                                       age,sex,
+                                       marital_status,
+                                       gen_edu_level,
+                                       adj_multiplier,
+                                       status.cws,
+                                       year,quarter,
+                                       visit
+                                      ) |>
+  filter(age>=15,age<=65)|>
+  collect() |>
+  setDT()|>
+  mutate(period=yq.to.t(year,quarter)) |>
+  filter(period<=10) |>
+  filter(sex!=3) |>
+  mutate(Married = marital_status==2,
+         Very.Young = age<21,
+         Young = age>=21 & age<30,
+         Graduate = gen_edu_level>=12,
+         sex = if_else(sex==1,"Male","Female"),
+         status.cws.brd=category.status.coarse(status.cws),
+         status.cws.nrw = category.status(status.cws),
+         visit=as.numeric(str_sub(visit,2,2))
+         ) |>
+  as.data.table() |>
+  setkey(upid)
+```
+
+
+```{r}
+hh_kids <- 
+  open_dataset("../artefacts/rewritten_pp.parquet") |>
+  filter(age<5) |>
+  select(uhid,visit) |>
+  distinct() |>
+  collect() |>
+  mutate(visit=as.numeric(str_sub(visit,2,2)),
+                           chr_kid = TRUE) |>
+  as.data.table()
+```
+
+
+```{r}
+matched <- local({ 
+  pp_matched <- match.decorate(pp,upid,period)
+  left_join(filter(pp_matched,match.side=="before",match.status=="matched"),
+            filter(pp_matched,match.side=="after",match.status=="matched"),
+            by="match.id") |>
+  as.data.table()
+})
+```
+
+```{r}
+#Corresponding to each position in `x`, give the number of
+#  consecutive positions, prior and up to that position
+#  where `x` has had the same value
+#
+#> rolling_run_length(c(2,2,1,2,2,2))
+## [1] 1 2 1 1 2 3
+
+rolling_run_length <- function(x){
+  ans <- integer(length(x))
+  if (length(ans)>0){
+    old <- x[[1]]
+    n <- 0
+    for (i in 1:length(x)){
+      if (x[i]==old){
+        n <- n+1
+        ans[[i]] <- n
+      } else {
+        old <- x[[i]]
+        n <- 1
+        ans[[i]] <- n
+      }
+    }
+  }
+  ans
+}
+```
+
+
+```{r}
+hist_chrs <- 
+  pp |>
+  select(upid,visit,status.cws.brd) |>
+  mutate(is_emp=if_else(status.cws.brd=="work","E","N"))|>
+  select(-status.cws.brd) |>
+  group_by(upid)|>
+  arrange(visit,.by_group=TRUE) |>
+  filter(max(visit)-min(visit)+1==n()) |> #No gaps
+  mutate(E.Ratio = (cumsum(is_emp=="E")-cumsum(is_emp=="N"))/row_number(),
+         EN.Streak=rolling_run_length(is_emp)) |>
+  ungroup() |>
+  mutate(EN.Streak=factor(EN.Streak)) |>
+  as.data.table()
+```
+
+
+```{r}
+pp.for.reg <- 
+  matched |>
+  left_join(hh_kids,by=c("uhid.x"="uhid","visit.x"="visit")) |>
+  left_join(hist_chrs,by=c("upid.x"="upid","visit.x"="visit")) |>
+  group_by(panel.x,period.x) |>
+  mutate(wt=adj_multiplier.x/sum(adj_multiplier.x,na.rm=TRUE)) |>
+  ungroup() |>
+  mutate(clustid= paste(panel.x,period.x,fsu.x,by=":"),
+         EN.Streak = droplevels(EN.Streak),
+         Has.Child=replace_na(chr_kid,FALSE),
+         Lost=status.cws.brd.x=="work" & status.cws.brd.y!="work",
+         Gained=status.cws.brd.x!="work" & status.cws.brd.y=="work") |>
+  select(clustid,Lost,Gained,Very.Young.x,Young.x,Graduate.x,Has.Child,Married.x,E.Ratio,EN.Streak,
+       visit.x,period.x,sex.x,wt,status.cws.brd.x,status.cws.brd.y,
+       status.cws.x,status.cws.y) |>
+  as_tibble() |>
+  drop_na()
+
+
+pp.emp <- 
+  pp.for.reg |>
+  filter(status.cws.brd.x=="work") 
+
+pp.nemp <- 
+  pp.for.reg |>
+  filter(status.cws.brd.x!="work") 
+```
+
+```{r}
+(dat_vry_yng_inedu <- pp.nemp |>
+  filter(Very.Young.x) |>
+  summarize(sum(wt*(status.cws.x=="91"))/sum(wt)) |>
+  as_tibble() |>
+  pull()*100)
+
+(dat_vry_yng_outedu <- pp.emp |>
+  filter(Very.Young.x,Lost) |>
+  summarize(sum(wt*(status.cws.y=="91"))/sum(wt)) |>
+  as_tibble() |>
+  pull()*100)
+
+```
+
+
+```{r}
+sd_emp <- svydesign(id=~clustid,weights=~wt,data=pp.emp)
+sd_nemp <- svydesign(id=~clustid,weights=~wt,data=pp.nemp)
+```
+
+
+```{r}
+compu_effects <- function(outvar,design){
+  outvar <- ensym(outvar)
+  mod <- svyglm(new_formula(outvar,quote(
+                            Very.Young.x+Young.x+Graduate.x+Has.Child+
+                              Married.x+E.Ratio+EN.Streak+
+                              visit.x+period.x)),
+                family=quasibinomial("logit"),
+                design=design)
+  marg <- margins(mod,design=design,
+                  variables=c("Very.Young.x","Young.x","Graduate.x",
+                          "Has.Child","Married.x","E.Ratio",
+                          "EN.Streak"))
+  summary(marg)
+}
+```
+
+
+```{r}
+(eff_fgained <- compu_effects(Gained,subset(sd_nemp,sex.x=="Female")))
+```
+
+```{r}
+(eff_mgained <- compu_effects(Gained,subset(sd_nemp,sex.x=="Male")))
+```
+
+```{r}
+(eff_flost <- compu_effects(Lost,subset(sd_emp,sex.x=="Female")))
+```
+
+```{r}
+(eff_mlost <- compu_effects(Lost,subset(sd_emp,sex.x=="Male")))
+```
+```{r}
+extract.summary.margins <- function(model){
+  createTexreg(
+    coef.names=model$factor,
+    coef=model$AME,
+    se=model$SE,
+    pvalues=model$p,
+    #ci.low=model$lower,
+    #ci.up=model$upper
+  )
+}
+setMethod("extract", signature = "summary.margins",
+ definition = extract.summary.margins)
+```
+
+```{r}
+tab_logit_gainloss <- 
+texreg(list(eff_fgained,eff_mgained,eff_flost,eff_mlost),
+       custom.model.names = c("Gained (Female)","Gained (Male)","Lost (Female)","Lost (Male)"),
+       custom.coef.map=list("Very.Young.x"="Very.Young",
+                            "Young.x"="Young",
+                            "Graduate.x"="Graduate",
+                            "Has.Child"=NA,
+                            "Married.x"="Married",
+                            "E.Ratio"=NA,
+                            "EN.Streak2"="EN.Streak=2",
+                            "EN.Streak3"="EN.Streak=3"),
+       fontsize="small",
+       #custom.note="%stars. Robust standard errors clustered by FSU in parentheses.",
+       digits=3,
+       caption="Determinants of job gain and loss. Average marginal effects from logit model.",
+       label="tab:logit-gainloss",
+       caption.above=TRUE,
+       booktabs=TRUE,
+       dcolumn=TRUE,
+       use.packages=FALSE
+       )
+```
+```{r}
+knitreg(list(eff_fgained,eff_fgained,eff_flost,eff_mlost),
+       custom.model.names = c("Gained (Female)","Gained (Male)","Lost (Female)","Lost (Male)"),
+       custom.coef.map=list("Very.Young.x"="Very.Young",
+                            "Young.x"="Young",
+                            "Graduate.x"="Graduate",
+                            "Has.Child"=NA,
+                            "Married.x"="Married",
+                            "E.Ratio"=NA,
+                            "EN.Streak2"="EN.Streak=2",
+                            "EN.Streak3"="EN.Streak=3"),
+       custom.note="%stars. Robust standard errors clustered by FSU in parentheses.",
+       digits=3
+       )
+```
+
+```{r}
+to_save <-  
+  do.call(c,lapply(
+      c("tab_*","dat_*","fig_*"),
+      function(x) ls(.GlobalEnv,pattern=glob2rx(x))))
+save(list=to_save,
+     file="../artefacts/res_gained_lost.rds")
+```
+
+
+
