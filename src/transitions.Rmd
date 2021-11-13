@@ -246,11 +246,11 @@ gr_break <- function(wrk_typ){
 ```
 
 ```{r}
-(fig_earn_break <- 
+fig_earn_break <- 
 cowplot::plot_grid(gr_break("sal-emp"),
                    gr_break("slf-emp"),
                    labels="auto",label_fontface="plain",nrow=1
-                   ))
+                   )
 ```
 
 ```{r}
