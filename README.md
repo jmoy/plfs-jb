@@ -1,4 +1,4 @@
-Replication code for the paper ['Indian urban workers' labour
+Replication code in R for the new paper ['Indian urban workers' labour
 market transitions](https://arxiv.org/abs/2110.05482) by
 [Jyotirmoy Bhattacharya](https://www.jyotirmoy.net).
 
